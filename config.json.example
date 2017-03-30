@@ -1,0 +1,5 @@
+{
+    "botToken": "APP_BOT_USER_TOKEN",
+    "apiToken": "CLASH_API_TOKEN",
+    "appClientId": "DISCORD_APP_CLIENT_ID"
+}
