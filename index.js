@@ -3,11 +3,17 @@ onboard
   /register member|guest|tryout #CLASHTAG
 
   /member #CLASHTAG
-  /apply #CLASHTAG
-  xxx /join #CLASHTAG
-  /guest [#CLASHTAG]
+  /register #CLASHTAG
 
-  xxx /continue
+  /apply #CLASHTAG
+  /recruit #CLASHTAG
+  /tryout #CLASHTAG
+  /join #CLASHTAG
+
+  /guest [#CLASHTAG]
+  /visit [#CLASHTAG]
+
+  /continue
   /next
 
   /refresh
