@@ -8,12 +8,19 @@
 === ON MESSAGE ====
 
 IF UNKNOWN
-  /register
+  /register #CLASHTAG
   - check syntax and give feedback if incorrect
   - lookup clash acct
   - if no match, let them know
   - if match isn't in clan family, let them know
-  - WHAT if they're already doing this process and have an entry already?
+  - if they're already doing this process and have an entry already?
+  -- don't let them... give them a message
+  - if the tag belongs to an already associated account, let them know
+  -- how to mitigate?
+  - then update db
+  -- mark as "unverified" status
+  -- add clash account tag
+  - diplay found account info for user and ask them to /verify
 
 
 
@@ -22,6 +29,31 @@ IF UNKNOWN
 
 
   /visit
+
+
+
+  /verify
+  - if the user is not "unverified", let them know
+  - then update db
+  -- mark as "onboarding" status
+  -- mark as step 0
+  - acknowledge verification and explain steps, asking them to /next
+
+
+  /next
+  - if the user is not "onboarding", let them know
+  - if current step > max step
+  -- finalize them and send them on their way
+  --- set status to registered
+  --- remove unknown role
+  --- give correct role based on db role
+  --- send user appropriate message for their role
+  --- write appropriate message in general channel about this user
+  --- if applying, write message in #recruiting channel
+  - send text info of step # matching from their last "step" + 1
+  - then update db
+  -- mark as step = step + 1
+  - ask them to /next
 
 
 
