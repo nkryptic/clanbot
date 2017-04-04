@@ -13,16 +13,14 @@ IF UNKNOWN
   - lookup clash acct
   - if no match, let them know
   - if match isn't in clan family, let them know
-  - if they're already doing this process and have an entry already?
-  -- don't let them... give them a message
+  - if they're already verifying/onboarding
+  -- stop... give them a message to /restart first
   - if the tag belongs to an already associated account, let them know
-  -- how to mitigate?
+  -- how to mitigate?  maybe tell thim to ping someone?
   - then update db
-  -- mark as "unverified" status
+  -- mark as "uncomfirmed" status
   -- add clash account tag
-  - diplay found account info for user and ask them to /verify
-
-
+  - diplay found account info for user and ask them to /confirm
 
   /apply
 
@@ -32,13 +30,12 @@ IF UNKNOWN
 
 
 
-  /verify
-  - if the user is not "unverified", let them know
+  /confirm
+  - if the user is not "uncomfirmed", let them know
   - then update db
   -- mark as "onboarding" status
   -- mark as step 0
-  - acknowledge verification and explain steps, asking them to /next
-
+  - acknowledge confirmation and explain upcoming messages, asking them to /next
 
   /next
   - if the user is not "onboarding", let them know
@@ -55,9 +52,16 @@ IF UNKNOWN
   -- mark as step = step + 1
   - ask them to /next
 
-
-
   /restart
+  - reenter them into db with starter info
+  - send signup command info
+
+END [IF UNKNOWN]
+
+IF ADMIN
+  /set onboard.msg 1
+  /get onboard.msg 1
+
 */
 const splitMessage = require('discord.js').splitMessage
 const Storage = require('node-storage')
@@ -70,7 +74,14 @@ const logger = new Logger(appName)
 const noop = () => {}
 const API_PLAYER_URL = 'https://api.clashofclans.com/v1/players/%23{TAG}'
 const API_CLAN_MEMBERS_URL = 'https://api.clashofclans.com/v1/clans/%23{TAG}/members'
-const clanFamilyTags = ['#9V00QQ9G', '#88JQ8VPQ', '#YL0YV9Q']
+const clanFamilyTags = ['#9V00QQ9G', '#88JQ8VPQ', '#YL0YV9Q', '#C2VPYLJU', '#QVPJRV0G']
+const clanFamilyRoles = [
+    '#9V00QQ9G': 'FNF'
+  , '#88JQ8VPQ': 'GNG'
+  , '#YL0YV9Q': 'HNH'
+  , '#C2VPYLJU': 'VNV'
+  , '#QVPJRV0G': 'RNR'
+]
 const clanRoleMap = {leader: 'a leader', coLeader: 'a co-leader', admin: 'an elder', member: 'a member'}
 
 // const register_member_regex = new RegExp(/^!register +member +#?([a-zA-Z0-9]+) *$/, 'i')
@@ -101,6 +112,7 @@ function OnBoard(config, client) {
       clash: new Map(this.db.get('accounts.clash') || [])
     , discord: new Map(this.db.get('accounts.discord') || [])
   }
+  this.onboardMsgs = this.db.get('onboard.messages') || []
   this.roles = {}
   this.channels = {}
   this.guild = null
@@ -221,21 +233,38 @@ OnBoard.prototype.onGuildMemberAdd = function(member) {
     , primaryVillage: null
     , villages: []
   })
-  let message = 'Hi, I\'m an automated chatbot to help you get started\n'
+  let message = 'Hi, I\'m an automated chatbot to help you access the server\n'
               + 'Welcome ' + member + '!\n\n'
-              + 'Are you visiting or are you in one of our clans?\n'
-              + '- type `!register member #CLASHTAG` - if you are already a member in one of our clans\n'
-              + '- type `!register guest #CLASHTAG` if you are looking to join our family or just visit\n'
-              // + '- type `!register guest` - for temporary access (your membership will only last a few hours)\n'
+              + 'Are you visiting, looking to join or are you already in one of our clans?\n'
+              + '- type `' + cmd_prefix + 'register #CLASHTAG` - if you are already a member in one of our clans\n'
+              + '- type `' + cmd_prefix + 'apply #CLASHTAG` if you are looking to join a clan in our family\n'
+              + '- type `' + cmd_prefix + 'visit #CLASHTAG` for guest access\n'
               + '*replace #CLASHTAG with your CoC tag viewable at the top of your Clash profile page*'
-  setTimeout(() => {data.chan.stopTyping(); data.chan.sendMessage(message).catch(noop)}, 4000)
+  setTimeout(() => {
+    this.channels.welcome.stopTyping(); this.channels.welcome.chan.sendMessage(message).catch(noop)
+  }, 4000)
+  // TODO: write "join server" message to "audit" channel
 }
 
 OnBoard.prototype.onGuildMemberRemove = function(member) {
-  console.log('guildMemberRemove')
+  let acct = this.accounts.discord.get(member.id)
+  if (acct) {
+    for (let clashid of acct.villages) {
+      this.accounts.clash.delete(clashid)
+    }
+    this.accounts.discord.delete(member.id)
+  }
+  this.db.put('accounts.discord', Array.from(this.accounts.discord.entries()))
+  this.db.put('accounts.clash', Array.from(this.accounts.clash.entries()))
+
+  // TODO: write "left server" message to "audit" channel
 }
 
 OnBoard.prototype.onMessage = function(msg) {
+  const authzRoleName = 'Co-Leaders'  // this.options.authzRole
+      // , isAdminUser = m => m.author.username === 'nkryptic' || m.author.username === 'Stacey'
+      , isAdminUser = m => authzRoleName && m.member.roles.exists('name', authzRoleName)
+
   if (msg.author.bot) {
     return
   }
@@ -382,9 +411,15 @@ OnBoard.prototype.onReady = function() {
     this.guild = this.client.guilds.find('name', 'Playmakers Wanted')
     this.channels.welcome = this.guild.channels.find('name', 'register')
     this.channels.general = this.guild.channels.find('name', 'primary-chat')
+    this.channels.audit = this.guild.channels.find('name', 'comings-and-goings')
     this.roles.guest = this.guild.roles.find('name', 'Guests')
     this.roles.member = this.guild.roles.find('name', 'Members')
+    this.roles.newMember = this.guild.roles.find('name', 'New')
     this.roles.unknown = this.guild.roles.find('name', 'Unknowns')
+    this.roles.family = {}
+    for (let [tag, roleName] of Object.entries(clanFamilyRoles)) {
+      this.roles.family[roleNmae] = this.guild.roles.find('name', roleName)
+    }
   }
 }
 

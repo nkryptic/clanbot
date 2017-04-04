@@ -23,6 +23,7 @@ onboard
   /addmini #CLASHTAG [to @DISCORD_USERNAME]
   /register #CLASHTAG [to @DISCORD_USERNAME]
   /unregister #CLASHTAG
+  /primary #CLASHTAG
 
   /clan...
   /whoami
@@ -35,7 +36,7 @@ onboard
   /claninfo
 
 discordplus
-  /dc list roles
+  /dc rolelist
   /dc list ROLENAME
 
 warwatch
