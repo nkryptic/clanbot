@@ -74,14 +74,15 @@ const logger = new Logger(appName)
 const noop = () => {}
 const API_PLAYER_URL = 'https://api.clashofclans.com/v1/players/%23{TAG}'
 const API_CLAN_MEMBERS_URL = 'https://api.clashofclans.com/v1/clans/%23{TAG}/members'
-const clanFamilyTags = ['#9V00QQ9G', '#88JQ8VPQ', '#YL0YV9Q', '#C2VPYLJU', '#QVPJRV0G']
-const clanFamilyRoles = [
-    '#9V00QQ9G': 'FNF'
-  , '#88JQ8VPQ': 'GNG'
-  , '#YL0YV9Q': 'HNH'
-  , '#C2VPYLJU': 'VNV'
-  , '#QVPJRV0G': 'RNR'
-]
+const clanFamily = {
+    'FNF': {tag: '#9V00QQ9G', role: 'FNF'}
+  , 'GNG': {tag: '#88JQ8VPQ', role: 'GNG'}
+  , 'HNH': {tag: '#YL0YV9Q', role: 'HNH'}
+  , 'VNV': {tag: '#C2VPYLJU', role: 'VNV'}
+  , 'RNR': {tag: '#QVPJRV0G', role: 'RNR'}
+}
+const clanFamilyTags = Object.entries(clanFamily).map(([k, v]) => {return v.tag})
+const clanFamilyRoles = new Map(Object.entries(clanFamily).map(([k, v]) => {return [v.tag, v.role]}))
 const clanRoleMap = {leader: 'a leader', coLeader: 'a co-leader', admin: 'an elder', member: 'a member'}
 
 // const register_member_regex = new RegExp(/^!register +member +#?([a-zA-Z0-9]+) *$/, 'i')
@@ -100,6 +101,11 @@ const cmd_prefix = '/'
 //   + '**`' + cmd_prefix + ' remove <clashID or ' + acctHashLabel + '>` ** - unregister a clan account' + '\n'
 //   + '**`' + cmd_prefix + ' cleanup` ** - remove Discord users and registered accounts that have left the server' + '\n'
 //   + '**`' + cmd_prefix + ' notify march` ** - ping marching orders to owners of clan accounts in war'
+const signupBaseMsg = 'Are you visiting, looking to join or are you already in one of our clans?\n'
+  + '- type `' + cmd_prefix + 'register #CLASHTAG` - if you are already a member in one of our clans\n'
+  + '- type `' + cmd_prefix + 'apply #CLASHTAG` if you are looking to join a clan in our family\n'
+  + '- type `' + cmd_prefix + 'visit #CLASHTAG` for guest access\n'
+  + '*replace #CLASHTAG with your CoC tag viewable at the top of your Clash profile page*'
 
 
 function OnBoard(config, client) {
@@ -234,12 +240,7 @@ OnBoard.prototype.onGuildMemberAdd = function(member) {
     , villages: []
   })
   let message = 'Hi, I\'m an automated chatbot to help you access the server\n'
-              + 'Welcome ' + member + '!\n\n'
-              + 'Are you visiting, looking to join or are you already in one of our clans?\n'
-              + '- type `' + cmd_prefix + 'register #CLASHTAG` - if you are already a member in one of our clans\n'
-              + '- type `' + cmd_prefix + 'apply #CLASHTAG` if you are looking to join a clan in our family\n'
-              + '- type `' + cmd_prefix + 'visit #CLASHTAG` for guest access\n'
-              + '*replace #CLASHTAG with your CoC tag viewable at the top of your Clash profile page*'
+              + 'Welcome ' + member + '!\n\n' + signupBaseMsg
   setTimeout(() => {
     this.channels.welcome.stopTyping(); this.channels.welcome.chan.sendMessage(message).catch(noop)
   }, 4000)
@@ -268,47 +269,81 @@ OnBoard.prototype.onMessage = function(msg) {
   if (msg.author.bot) {
     return
   }
-  // register
-  // apply
-  // visit
+
+  // IF UNKNOWN
   if (msg.member.roles.has(this.roles.unknown.id)) {
-    if (/^\/register/i.test(msg.content)) {
-      match = /^\/register +#?([a-zA-Z0-9]+) *$/i.exec(msg.content)
+    let acct = this.accounts.discord.get(msg.member.id) || {}
+    const register_base_cmd_regex = new RegExp(/^/.source + cmd_prefix + /register\b/.source, 'i')
+    const register_cmd_regex = new RegExp(register_base_cmd_regex.source + / +#?([a-zA-Z0-9]+) *$/.source, 'i')
+    /*
+    /register #CLASHTAG
+    - check syntax and give feedback if incorrect
+    - lookup clash acct
+    - if no match, let them know
+    - if match isn't in clan family, let them know
+    - if they're already verifying/onboarding
+    -- stop... give them a message to /restart first
+    - if the tag belongs to an already associated account, let them know
+    -- how to mitigate?  maybe tell thim to ping someone?
+    - then update db
+    -- mark as "uncomfirmed" status
+    -- add clash account tag
+    - diplay found account info for user and ask them to /confirm
+    */
+    if (register_base_cmd_regex.test(msg.content) && !(acct && acct.status === 'onboarding')) {
+      match = register_cmd_regex.exec(msg.content)
       if (match) {
         getPlayerJSON(this.options.apiToken, match[1])
           .then(function(info) {
             if (info.clan && info.clan.tag && clanFamilyTags.includes(info.clan.tag)) {
-              // if account isn't already claimed...
-              data.accounts.discord.set(msg.member.id, {
-                  status: 'onboarding'
-                , type: 'member'
-                , step: 1
-                , primaryVillage: info.tag
-                , villages: [info.tag]
-              })
-              msg.member.setNickname(info.name).catch(console.log)
+              if (this.accounts.clash.has(info.tag)) {
+                // tag owned by someone else already?  Either the user
+                // is trying to claim a base they don't own, or a mistake was made
+                msg.channel.sendMessage('sorry, the tag ' + info.tag + 'has already been '
+                  + 'claimed.  If you feel this is an error, contact a co-leader in game.\n\n' + signupBaseMsg)
+              }
+              else {
+                // if account isn't already claimed...
+                this.accounts.discord.set(msg.member.id, {
+                    status: 'uncomfirmed'
+                  , type: 'member'
+                  , primaryVillage: info.tag
+                  , villages: [info.tag]
+                })
+                msg.member.setNickname(info.name).catch(noop)
 
-              setTimeout(() => {msg.channel.sendMessage('I see you are a member of ' + info.clan.name + '.  Welcome to the family!')}, 500)
-              setTimeout(() => {msg.channel.sendMessage('Just have a few things for you to read before I can give you full access here...')}, 1000)
-              setTimeout(() => {msg.channel.sendMessage(rulesMsg)}, 2500)
-              setTimeout(() => {msg.channel.sendMessage('\n\nType `!continue ` when you\'ve read that and want to proceed.')}, 5000)
+                msg.channel.sendMessage('I see you are a member of ' + info.clan.name + '.  '
+                  + 'Welcome to the family!  Just have a few things for you to read before you '
+                  + 'get full access here...\n\n'
+                  + 'Type `' + cmd_prefix + 'next ` to proceed.')
 
-              // else
-              // msg.channel.sendMessage('That village is already claimed here' + info.clan.name + '.  Welcome to the family!')
+                // setTimeout(() => {msg.channel.sendMessage('I see you are a member of ' + info.clan.name + '.  Welcome to the family!')}, 500)
+                // setTimeout(() => {msg.channel.sendMessage('Just have a few things for you to read before I can give you full access here...')}, 1000)
+                // setTimeout(() => {msg.channel.sendMessage(rulesMsg)}, 2500)
+                // setTimeout(() => {msg.channel.sendMessage('\n\nType `!continue ` when you\'ve read that and want to proceed.')}, 5000)
+              }
             }
             else if (info.clan && info.clan.tag) {
-              msg.channel.sendMessage('sorry, that village belongs to the ' + info.clan.name + ' clan, which is not part of our family.  maybe register as a guest?')
+              msg.channel.sendMessage('sorry, that village belongs to the ' + info.clan.name
+                + ' clan, which is not part of our family.  signup as a guest or apply to '
+                + 'join instead.\n\n' + signupBaseMsg)
             }
             else {
-              msg.channel.sendMessage('sorry, your village is not a member of a clan in our family.  maybe register as a guest?')
+              msg.channel.sendMessage('sorry, your village is not a member of a clan in our '
+                + 'family.  signup as a guest or apply to join instead.\n\n' + signupBaseMsg)
             }
           }.bind(this))
           .catch(e => {
             console.log(e)
-            msg.channel.sendMessage('sorry, that does not appear to be a valid clash account tag')
+            msg.channel.sendMessage('sorry, that does not appear to be a valid clash account '
+              + 'tag.\n\n' + signupBaseMsg)
           })
       }
     }
+    
+    /*
+    /apply #CLASHTAG
+    */
     else if (register_prospect_regex.test(msg.content)) {
       match = register_prospect_regex.exec(msg.content)
       if (match) {
@@ -342,8 +377,40 @@ OnBoard.prototype.onMessage = function(msg) {
           })
       }
     }
-    // else if (register_guest_regex.test(msg.content)) {
-    // }
+
+    /*
+    /visit #CLASHTAG
+    */
+    else if (register_guest_regex.test(msg.content)) {
+    }
+    
+    /*
+    /confirm
+    - if the user is not "uncomfirmed", let them know
+    - then update db
+    -- mark as "onboarding" status
+    -- mark as step 0
+    - acknowledge confirmation and explain upcoming messages, asking them to /next
+    */
+    else if (register_guest_regex.test(msg.content)) {
+    }
+
+    /*
+    /next
+    - if the user is not "onboarding", let them know
+    - if current step > max step
+    -- finalize them and send them on their way
+    --- set status to registered
+    --- remove unknown role
+    --- give correct role based on db role
+    --- send user appropriate message for their role
+    --- write appropriate message in general channel about this user
+    --- if applying, write message in #recruiting channel
+    - send text info of step # matching from their last "step" + 1
+    - then update db
+    -- mark as step = step + 1
+    - ask them to /next
+    */
     else if (msg.content === '!continue') {
       let acct = data.accounts.discord.get(msg.member.id)
       if (acct && acct.status === 'onboarding') {
@@ -357,6 +424,7 @@ OnBoard.prototype.onMessage = function(msg) {
         else if (acct.step == 2) {
           delete acct.step
           acct.status = 'registered'
+          acct.joinedOn = new Date().toLocaleDateString()
           data.accounts.discord.set(msg.member.id, acct)
           msg.member.removeRole(data.roles.unknown)
           msg.channel.sendMessage('You are now fully registered')
@@ -386,6 +454,14 @@ OnBoard.prototype.onMessage = function(msg) {
         }
       }
     }
+    /*
+    /restart
+    - reenter them into db with starter info
+    - send signup command info
+    */
+    else if (register_guest_regex.test(msg.content)) {
+    }
+
     else {
       let acct = data.accounts.discord.get(msg.member.id)
       if (acct && acct.status === 'onboarding') {
@@ -401,7 +477,7 @@ OnBoard.prototype.onMessage = function(msg) {
         msg.channel.sendMessage(message)
       }
     }
-  }
+  } // END [IF UNKNOWN]
 }
 
 OnBoard.prototype.onReady = function() {
