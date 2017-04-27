@@ -112,6 +112,8 @@ const signupBaseMsg = 'Are you visiting, looking to join or are you already in o
   + '- type `' + cmd_prefix + 'visit #CLASHTAG` for guest access\n'
   + '*replace #CLASHTAG with your CoC tag viewable at the top of your Clash profile page*'
 
+var playerDataCache = new Map([])
+
 
 function OnBoard(config, client) {
   this.client = client
@@ -124,6 +126,7 @@ function OnBoard(config, client) {
     , discord: new Map(this.db.get('accounts.discord') || [])
   }
   this.onboardMsgs = this.db.get('onboard.messages') || []
+  this.joinMsgs = this.db.get('join.messages') || []
   this.roles = {}
   this.channels = {}
   this.guild = null
@@ -232,13 +235,23 @@ OnBoard.prototype._removeAccount = function(clashid) {
   this.db.put('accounts.clash', Array.from(this.accounts.clash.entries()))
 }
 
+OnBoard.prototype._updateDiscordAccount = function(discordid, info) {
+  this.accounts.clash.set(discordid, info)
+  this.db.put('accounts.discord', Array.from(this.accounts.discord.entries()))
+}
+
+OnBoard.prototype._updateClashAccount = function(clashid, discordid) {
+  this.accounts.clash.set(clashid, discordid)
+  this.db.put('accounts.clash', Array.from(this.accounts.clash.entries()))
+}
+
 OnBoard.prototype.onGuildMemberAdd = function(member) {
   if (member.user.bot) {return}
 
   this.channels.welcome.startTyping()
   // on join, send unknown users the registration instructions:
   member.addRole(this.roles.unknown).catch(noop)
-  this.accounts.discord.set(member.id, {
+  this._updateDiscordAccount(member.id, {
       status: 'unknown'
     , type: 'unknown'
     , primaryVillage: null
@@ -269,7 +282,7 @@ OnBoard.prototype.onGuildMemberRemove = function(member) {
 OnBoard.prototype.onMessage = function(msg) {
   const authzRoleName = 'Co-Leaders'  // this.options.authzRole
       // , isAdminUser = m => m.author.username === 'nkryptic' || m.author.username === 'Stacey'
-      , isAdminUser = m => authzRoleName && m.member.roles.exists('name', authzRoleName)
+      , isAdminUser = m => authzRoleName && m.roles.exists('name', authzRoleName)
 
   if (msg.author.bot) {
     return
@@ -309,7 +322,7 @@ OnBoard.prototype.onMessage = function(msg) {
               }
               else {
                 // if account isn't already claimed...
-                this.accounts.discord.set(msg.member.id, {
+                this._updateDiscordAccount(msg.member.id, {
                     status: 'uncomfirmed'
                   , type: 'member'
                   , primaryVillage: info.tag
@@ -385,7 +398,7 @@ OnBoard.prototype.onMessage = function(msg) {
             if (!info.clan || (info.clan.tag && !clanFamilyTags.includes(info.clan.tag))) {
               // if account isn't already claimed...
               let acctType = action === 'apply' ? 'prospect' : 'guest'
-              this.accounts.discord.set(msg.member.id, {
+              this._updateDiscordAccount(msg.member.id, {
                   status: 'uncomfirmed'
                 , type: acctType
                 , primaryVillage: info.tag
@@ -440,7 +453,7 @@ OnBoard.prototype.onMessage = function(msg) {
       getPlayerJSON(this.options.apiToken, acct.primaryVillage)
         .then(function(info) {
           Object.assign(acct, {status: 'onboarding', step: 0})
-          this.accounts.discord.set(msg.member.id, acct)
+          this._updateDiscordAccount(msg.member.id, acct)
           
           // assign nickname: IGN (clan-name)
           let nick = info.name
@@ -495,23 +508,22 @@ OnBoard.prototype.onMessage = function(msg) {
         msg.channel.sendMessage(this.onboardMsgs[step])
         msg.channel.sendMessage('** **\nType `' + cmd_prefix + 'next ` to proceed.')
         acct.step = step + 1
-        this.accounts.discord.set(msg.member.id, acct)
+        this._updateDiscordAccount(msg.member.id, acct)
       }
       else {
         delete acct.step
         acct.status = 'registered'
         acct.joinedOn = new Date().toLocaleDateString()
-        this.accounts.discord.set(msg.member.id, acct)
-
-        msg.member.removeRole(data.roles.unknown)
-        msg.channel.sendMessage('You should now be able to see')
+        this._updateDiscordAccount(msg.member.id, acct)
+        msg.member.removeRole(this.roles.unknown)
 
         if (acct.type === 'guest') {
-          msg.member.addRole(data.roles.guest)
-          msg.channel.sendMessage('*Note you have very limited access and many channels are read-only*')
+          msg.member.addRole(this.roles.guest)
+          msg.channel.sendMessage(this.joinMsgs['guest'])
+          
           getPlayerJSON(acct.primaryVillage)
             .then(info => {
-              let output = 'A guest just registered: ' + info.name + '.  A TH' + info.townHallLevel
+              let output = 'A guest just completed registration: ' + info.name + '.  A TH' + info.townHallLevel
                          + ' with ' + info.trophies + ' trophies, ' + info.warStars + ' war stars, '
                          + info.attackWins + ' attacks and ' + info.defenseWins + ' defends this season.'
 
@@ -519,15 +531,51 @@ OnBoard.prototype.onMessage = function(msg) {
                 output = output + ' Currently ' + humanizedClanRoleMap[info.role] + ' in the clan "' + info.clan.name + '".'
               }
               output = output + ' Discord username: ' + msg.member.user.username
-              data.chan2.sendMessage(output)
+              this.channels.audit.sendMessage(output)
+            })
+            .catch(e => {
+              console.log(e)
+            })
+        }
+        else if (acct.type === 'prospect') {
+          msg.member.addRole(this.roles.prospect)
+          msg.channel.sendMessage(this.joinMsgs['prospect'])
+
+          getPlayerJSON(acct.primaryVillage)
+            .then(info => {
+              let output = 'A prospect just completed registration: ' + info.name + '.  A TH' + info.townHallLevel
+                         + ' with ' + info.trophies + ' trophies, ' + info.warStars + ' war stars, '
+                         + info.attackWins + ' attacks and ' + info.defenseWins + ' defends this season.'
+
+              if (info.clan && info.clan.name) {
+                output = output + ' Currently ' + humanizedClanRoleMap[info.role] + ' in the clan "' + info.clan.name + '".'
+              }
+              output = output + ' Discord username: ' + msg.member.user.username
+              this.channels.audit.sendMessage(output)
             })
             .catch(e => {
               console.log(e)
             })
         }
         else {
-          msg.member.addRole(data.roles.member)
-          data.chan2.sendMessage('A clam member just registered: ' + msg.member.nickname + ' -- Discord username: ' + msg.member.user.username)
+          this._updateClashAccount(acct.primaryVillage, msg.member.id)
+          msg.member.addRole(this.roles.newMember)
+          msg.channel.sendMessage(this.joinMsgs['member'])
+          
+          getPlayerJSON(acct.primaryVillage)
+            .then(info => {
+              msg.member.addRole(this.roles.family[clanFamilyRoles.get(info.clan.tag)])
+
+              let output = 'A member just completed registration: ' + info.name + '.  A TH' + info.townHallLevel
+                         + ' with ' + info.trophies + ' trophies, ' + info.warStars + ' war stars, '
+                         + info.attackWins + ' attacks and ' + info.defenseWins + ' defends this season.'
+              output = output + ' Currently ' + humanizedClanRoleMap[info.role] + ' in the clan "' + info.clan.name + '".'
+              output = output + ' Discord username: ' + msg.member.user.username
+              this.channels.audit.sendMessage(output)
+            })
+            .catch(e => {
+              console.log(e)
+            })
         }
     }
 
@@ -538,6 +586,16 @@ OnBoard.prototype.onMessage = function(msg) {
     - send signup command info
     */
     else if (restart_cmd_regex.test(msg.content)) {
+    }
+
+    const support_cmd_regex = new RegExp(/^/.source + cmd_prefix + /get-support\b *$/.source, 'i')
+    /*
+    /get-support
+    - set their status to "support"
+    - notify @support group
+    - send response
+    */
+    else if (support_cmd_regex.test(msg.content)) {
     }
 
     else {
@@ -556,6 +614,14 @@ OnBoard.prototype.onMessage = function(msg) {
       }
     }
   } // END [IF UNKNOWN]
+  else if (isAdminUser(msg.member)) {
+    // /joinmsg <guest|prospect|member> <edit|view>
+
+    // /mustread add <message...>
+    // /mustread edit <#> <message...>
+    // /mustread delete <#>
+    // /mustread view [#]
+  }
 }
 
 OnBoard.prototype.onReady = function() {
@@ -567,9 +633,10 @@ OnBoard.prototype.onReady = function() {
     this.channels.general = this.guild.channels.find('name', 'primary-chat')
     this.channels.audit = this.guild.channels.find('name', 'comings-and-goings')
     this.roles.guest = this.guild.roles.find('name', 'Guests')
+    this.roles.prospect = this.guild.roles.find('name', 'Prospects')
     this.roles.member = this.guild.roles.find('name', 'Members')
     this.roles.newMember = this.guild.roles.find('name', 'New')
-    this.roles.unknown = this.guild.roles.find('name', 'Unknowns')
+    this.roles.unknown = this.guild.roles.find('name', 'Unknown')
     this.roles.family = {}
     for (let [tag, roleName] of Object.entries(clanFamilyRoles)) {
       this.roles.family[roleNmae] = this.guild.roles.find('name', roleName)
@@ -579,7 +646,19 @@ OnBoard.prototype.onReady = function() {
 
 
 function getPlayerJSON(apiToken, tag) {
-  tag = tag.replace('#', '')
+  let stubTag = tag.replace('#', '')
+    , fullTag = '#' + stubTag
+
+  if (playerDataCache.has(fullTag)) {
+    let data = playerDataCache.get(fullTag)
+      , ts = new Date().getTime()
+    if (data[0] < ts) {
+      return new Promise(resolve) => {
+        resolve(data[1])
+      }
+    }
+
+  }
   return new Promise((resolve, reject) => {
     var p = Request({
         url: API_PLAYER_URL.replace('{TAG}', tag)
@@ -589,6 +668,8 @@ function getPlayerJSON(apiToken, tag) {
         }
       }, function (error, response, body) {
         if (!error && response.statusCode === 200) {
+          let expiry = new Date().getTime() + (5 * 60 * 1000)
+          playerDataCache.set(body.tag, [expiry, body])
           resolve(body)
         }
         else {
