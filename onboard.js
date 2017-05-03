@@ -111,6 +111,9 @@ const signupBaseMsg = 'Are you visiting, looking to join or are you already in o
   + '- type `' + cmd_prefix + 'apply #CLASHTAG` if you are looking to join a clan in our family\n'
   + '- type `' + cmd_prefix + 'visit #CLASHTAG` for guest access\n'
   + '*replace #CLASHTAG with your CoC tag viewable at the top of your Clash profile page*'
+const conflictBaseMsg = 'Because the village you have tried to register is already claimed by someone, you can:\n'
+  + '- type `' + cmd_prefix + 'get-support` - to contact a support person who may be able to release the village\n'
+  + '- type `' + cmd_prefix + 'restart` - if you want to start regstration over from the beginning for a differnt village')
 
 var playerDataCache = new Map([])
 
@@ -311,38 +314,30 @@ OnBoard.prototype.onMessage = function(msg) {
     if (register_base_cmd_regex.test(msg.content) && !(acct && acct.status === 'onboarding')) {
       let match = register_cmd_regex.exec(msg.content)
       if (match) {
-        getPlayerJSON(this.options.apiToken, match[1])
+        let tag = match[1].toUpperCase().replace(/O/g, '0')
+        getPlayerJSON(this.options.apiToken, tag)
           .then(function(info) {
             if (info.clan && info.clan.tag && clanFamilyTags.includes(info.clan.tag)) {
-              if (this.accounts.clash.has(info.tag)) {
-                // tag owned by someone else already?  Either the user
-                // is trying to claim a base they don't own, or a mistake was made
-                msg.channel.sendMessage('sorry, the tag ' + info.tag + 'has already been '
-                  + 'claimed.  If you feel this is an error, contact a co-leader in game.\n\n' + signupBaseMsg)
+              this._updateDiscordAccount(msg.member.id, {
+                  status: 'uncomfirmed'
+                , type: 'member'
+                , primaryVillage: info.tag
+                , villages: [info.tag]
+              })
+
+              output = ('Here is what I found matching the clash tag ' + info.tag ':\n'
+                + '*Village*: ' + info.name + ' (TH' + info.townHallLevel + ')\n')
+                
+              if (info.clan) {
+                output += '*clan*: ' + info.clan.name + ' (' + clanRoleMap[info.role] + ')\n\n'
               }
               else {
-                // if account isn't already claimed...
-                this._updateDiscordAccount(msg.member.id, {
-                    status: 'uncomfirmed'
-                  , type: 'member'
-                  , primaryVillage: info.tag
-                  , villages: [info.tag]
-                })
-
-                output = ('Here is what I found matching the clash tag ' + info.tag ':\n'
-                  + '*Village*: ' + info.name + ' (TH' + info.townHallLevel + ')\n')
-                  
-                if (info.clan) {
-                  output += '*clan*: ' + info.clan.name + ' (' + clanRoleMap[info.role] + ')\n\n'
-                }
-                else {
-                  output += '*clan*: NONE\n\n'
-                }
-                
-                output += ('type `' + cmd_prefix + 'confirm ` if the above is correct or '
-                  + '`' + cmd_prefix + 'restart ` to try again')
-                msg.channel.sendMessage(output)
+                output += '*clan*: NONE\n\n'
               }
+              
+              output += ('type `' + cmd_prefix + 'confirm ` if the above is correct or '
+                + '`' + cmd_prefix + 'restart ` to try again')
+              msg.channel.sendMessage(output)
             }
             else if (info.clan && info.clan.tag) {
               msg.channel.sendMessage('sorry, that village belongs to the ' + info.clan.name
@@ -355,7 +350,7 @@ OnBoard.prototype.onMessage = function(msg) {
             }
           }.bind(this))
           .catch(e => {
-            logger.error('failed to retrieve player json for ' + match[1] + ' => ' + e)
+            logger.error('failed to retrieve player json for ' + tag + ' => ' + e)
             msg.channel.sendMessage('sorry, that does not appear to be a valid clash account '
               + 'tag.\n\n' + signupBaseMsg)
           })
@@ -393,7 +388,8 @@ OnBoard.prototype.onMessage = function(msg) {
       
       match = reg_other_cmd_regex.exec(msg.content)
       if (match) {
-        getPlayerJSON(this.options.apiToken, match[2])
+        let tag = match[2].toUpperCase().replace(/O/g, '0')
+        getPlayerJSON(this.options.apiToken, tag)
           .then(function(info) {
             if (!info.clan || (info.clan.tag && !clanFamilyTags.includes(info.clan.tag))) {
               // if account isn't already claimed...
@@ -426,7 +422,7 @@ OnBoard.prototype.onMessage = function(msg) {
             }
           }.bind(this))
           .catch(e => {
-            logger.error('failed to retrieve player json for ' + match[1] + ' => ' + e)
+            logger.error('failed to retrieve player json for ' + tag + ' => ' + e)
             msg.channel.sendMessage('sorry, that does not appear to be a valid clash account '
               + 'tag.\n\n' + signupBaseMsg)
           })
@@ -452,29 +448,39 @@ OnBoard.prototype.onMessage = function(msg) {
     else if (confirm_cmd_regex.test(msg.content) && acct && acct.status === 'uncomfirmed') {
       getPlayerJSON(this.options.apiToken, acct.primaryVillage)
         .then(function(info) {
-          Object.assign(acct, {status: 'onboarding', step: 0})
-          this._updateDiscordAccount(msg.member.id, acct)
-          
-          // assign nickname: IGN (clan-name)
-          let nick = info.name
-          if (acct.type !== 'member') {
-            let clanName = info.clan ? info.clan.name : 'no clan'
-              , strLength = nick.length + clanName.length + 3
-
-            if (strLength > 32) {
-              clanName = '?'
-              strLength = nick.length + 4
-              if (strLength > 32) {
-                nick = nick.substr(0, 25) + '...'
-              }
-            }
-            nick += ' (' + clanName + ')'
+          if (this.accounts.clash.has(info.tag)) {
+            // village claimed by someone else already...
+            acct.status = 'conflict'
+            this._updateDiscordAccount(msg.member.id, acct)
+            msg.channel.sendMessage('Sorry, the tag ' + info.tag + 'has already been claimed.\n\n' + conflictBaseMsg)
           }
-          msg.member.setNickname(nick).catch(noop)
+          else {
+            // village isn't already claimed...
+            Object.assign(acct, {status: 'onboarding', step: 0})
+            this._updateDiscordAccount(msg.member.id, acct)
+            
+            // assign nickname: IGN (clan-name)
+            let nick = info.name
+            if (acct.type !== 'member') {
+              let clanName = info.clan ? info.clan.name : 'no clan'
+                , strLength = nick.length + clanName.length + 3
 
-          msg.channel.sendMessage('Thank you. Just a few items for you to read through '
-            + 'before you are granted full access to the rest of the server...\n\n'
-            + 'Type `' + cmd_prefix + 'next ` to proceed.')
+              if (strLength > 32) {
+                clanName = '?'
+                strLength = nick.length + 4
+                if (strLength > 32) {
+                  nick = nick.substr(0, 25) + '...'
+                }
+              }
+              nick += ' (' + clanName + ')'
+            }
+            msg.member.setNickname(nick).catch(noop)
+
+            msg.channel.sendMessage('Thank you. Just a few items for you to read through '
+              + 'before you are granted full access to the rest of the server...\n\n'
+              + 'Type `' + cmd_prefix + 'next ` to proceed.')
+          }
+
         }.bind(this))
         .catch(e => {
           logger.error('failed to retrieve player json for ' + match[1] + ' => ' + e)
@@ -591,7 +597,7 @@ OnBoard.prototype.onMessage = function(msg) {
     const support_cmd_regex = new RegExp(/^/.source + cmd_prefix + /get-support\b *$/.source, 'i')
     /*
     /get-support
-    - set their status to "support"
+    - set acct.support to true
     - notify @support group
     - send response
     */
