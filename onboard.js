@@ -483,7 +483,7 @@ OnBoard.prototype.onMessage = function(msg) {
 
         }.bind(this))
         .catch(e => {
-          logger.error('failed to retrieve player json for ' + match[1] + ' => ' + e)
+          logger.error('failed to retrieve player json for ' + acct.primaryVillage + ' => ' + e)
           msg.channel.sendMessage('sorry, there was an issue looking up your clash account.\n'
             + 'try the `' + cmd_prefix + 'confirm` command again in a few moments.')
         })
