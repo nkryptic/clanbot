@@ -1,39 +1,34 @@
 /*
 onboard
-  /register member|guest|tryout #CLASHTAG
-
-  /member #CLASHTAG
-  /register #CLASHTAG
-
-  /apply #CLASHTAG
-  /recruit #CLASHTAG
-  /tryout #CLASHTAG
-  /join #CLASHTAG
-
-  /guest [#CLASHTAG]
-  /visit [#CLASHTAG]
-
-  /continue
-  /next
-
-  /refresh
-
+  ONBOARDING COMMANDS
+    /register #CLASHTAG
+    /apply #CLASHTAG
+    /visit #CLASHTAG
+    /confirm
+    /next
+    /restart
+    /get-support
   MEMBER-ONLY COMMANDS
-  /add #CLASHTAG [to @DISCORD_USERNAME]
-  /addmini #CLASHTAG [to @DISCORD_USERNAME]
-  /register #CLASHTAG [to @DISCORD_USERNAME]
-  /unregister #CLASHTAG
-  /primary #CLASHTAG
-
-  /clan...
-  /whoami
-  /whois DISCORD_USERNAME
-  /whois @DISCORD_USERNAME
-  /whohas #CLASHTAG
-  /claninfo
-  /claninfo DISCORD_USERNAME
-  /claninfo CLAN
-  /claninfo
+    /help
+    /commands
+    /register #CLASHTAG
+    /unregister #CLASHTAG
+    /info
+    /info @DISCORD_USERNAME
+    /info #CLASHTAG
+    /members <GNG|HNH|VNV|FNF|RNR>
+    /refresh ????
+  ADMIN-ONLY COMMANDS
+    // /register #CLASHTAG to @DISCORD_USERNAME
+    // /unregister #CLASHTAG from @DISCORD_USERNAME
+    // /joinmsg => shows description and usage
+    // /joinmsg <guest|prospect|member> <edit|view>
+    // /mustread => shows description and usage
+    // /mustread add <message...>
+    // /mustread edit <#> <message...>
+    // /mustread delete <#>
+    // /mustread view <#>
+    // /mustread list
 
 discordplus
   /dc rolelist

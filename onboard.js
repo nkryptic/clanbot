@@ -1,70 +1,15 @@
 /*
-=== ON JOIN ===
-- add unknown role
-- enter them into db
-- send welcome message with instructions
 
+TODO:
+scheduled jobs
+- update known clash accounts
+-- new acct => promote discord user to member?
+-- acct left => demote discord user to guest?
+-- clan roles???
+- attack/defend logging
+- important moments of war logging
+- war timing pings (by TH level?)
 
-=== ON MESSAGE ====
-
-IF UNKNOWN
-  /register #CLASHTAG
-  - check syntax and give feedback if incorrect
-  - lookup clash acct
-  - if no match, let them know
-  - if match isn't in clan family, let them know
-  - if they're already verifying/onboarding
-  -- stop... give them a message to /restart first
-  - if the tag belongs to an already associated account, let them know
-  -- how to mitigate?  maybe tell thim to ping someone?
-  - then update db
-  -- mark as "uncomfirmed" status
-  -- add clash account tag
-  - diplay found account info for user and ask them to /confirm
-
-  /apply
-
-
-
-  /visit
-
-
-
-  /confirm
-  - if the user is not "uncomfirmed", let them know
-  - then update db
-  -- mark as "onboarding" status
-  -- mark as step 0
-  - acknowledge confirmation and explain upcoming messages, asking them to /next
-
-  /next
-  - if the user is not "onboarding", let them know
-  - if current step > max step
-  -- finalize them and send them on their way
-  --- set status to registered
-  --- remove unknown role
-  --- give correct role based on db role
-  --- send user appropriate message for their role
-  --- write appropriate message in general channel about this user
-  --- if applying, write message in #recruiting channel
-  - send text info of step # matching from their last "step" + 1
-  - then update db
-  -- mark as step = step + 1
-  - ask them to /next
-
-  /restart
-  - reenter them into db with starter info
-  - send signup command info
-
-END [IF UNKNOWN]
-
-IF ADMIN
-  /joinmsg <guest|prospect|member> <edit|view>
-
-  /mustread add <message...>
-  /mustread edit <#> <message...>
-  /mustread delete <#>
-  /mustread view [#]
 
 */
 const splitMessage = require('discord.js').splitMessage
@@ -239,12 +184,22 @@ OnBoard.prototype._removeAccount = function(clashid) {
 }
 
 OnBoard.prototype._updateDiscordAccount = function(discordid, info) {
-  this.accounts.clash.set(discordid, info)
+  this.accounts.discord.set(discordid, info)
   this.db.put('accounts.discord', Array.from(this.accounts.discord.entries()))
 }
 
-OnBoard.prototype._updateClashAccount = function(clashid, discordid) {
-  this.accounts.clash.set(clashid, discordid)
+OnBoard.prototype._updateClashAccount = function(clashid, discordid, info) {
+  // {
+  //   "tag": "#20LJPQQYG",
+  //   "name": "nkryptic",
+  //   "townHallLevel": 9,
+  //   "clan": {
+  //     "tag": "#88JQ8VPQ",
+  //     "name": "Grit N Grind"
+  //   }
+  // }
+  let newInfo = {}
+  this.accounts.clash.set(clashid, [discordid, newInfo])
   this.db.put('accounts.clash', Array.from(this.accounts.clash.entries()))
 }
 
@@ -286,6 +241,7 @@ OnBoard.prototype.onMessage = function(msg) {
   const authzRoleName = 'Co-Leaders'  // this.options.authzRole
       // , isAdminUser = m => m.author.username === 'nkryptic' || m.author.username === 'Stacey'
       , isAdminUser = m => authzRoleName && m.roles.exists('name', authzRoleName)
+      , isMemberUser = m => m.roles.has(this.roles.member.id) || m.roles.has(this.roles.newMember.id)
 
   if (msg.author.bot) {
     return
@@ -523,66 +479,54 @@ OnBoard.prototype.onMessage = function(msg) {
         this._updateDiscordAccount(msg.member.id, acct)
         msg.member.removeRole(this.roles.unknown)
 
-        if (acct.type === 'guest') {
-          msg.member.addRole(this.roles.guest)
-          msg.channel.sendMessage(this.joinMsgs['guest'])
-          
-          getPlayerJSON(acct.primaryVillage)
-            .then(info => {
-              let output = 'A guest just completed registration: ' + info.name + '.  A TH' + info.townHallLevel
-                         + ' with ' + info.trophies + ' trophies, ' + info.warStars + ' war stars, '
-                         + info.attackWins + ' attacks and ' + info.defenseWins + ' defends this season.'
+        getPlayerJSON(acct.primaryVillage)
+          .then(info => {
+            this._updateClashAccount(acct.primaryVillage, msg.member.id, info)
+            let output = ''
+            if (acct.type === 'guest') {
+              msg.member.addRole(this.roles.guest)
+              msg.channel.sendMessage(this.joinMsgs['guest'])
+              
+              output = 'A guest just completed registration: ' + info.name + '.  A TH' + info.townHallLevel
+                     + ' with ' + info.trophies + ' trophies, ' + info.warStars + ' war stars, '
+                     + info.attackWins + ' attacks and ' + info.defenseWins + ' defends this season.'
 
               if (info.clan && info.clan.name) {
                 output = output + ' Currently ' + humanizedClanRoleMap[info.role] + ' in the clan "' + info.clan.name + '".'
               }
               output = output + ' Discord username: ' + msg.member.user.username
-              this.channels.audit.sendMessage(output)
-            })
-            .catch(e => {
-              console.log(e)
-            })
-        }
-        else if (acct.type === 'prospect') {
-          msg.member.addRole(this.roles.prospect)
-          msg.channel.sendMessage(this.joinMsgs['prospect'])
+            }
+            else if (acct.type === 'prospect') {
+              msg.member.addRole(this.roles.prospect)
+              msg.channel.sendMessage(this.joinMsgs['prospect'])
 
-          getPlayerJSON(acct.primaryVillage)
-            .then(info => {
-              let output = 'A prospect just completed registration: ' + info.name + '.  A TH' + info.townHallLevel
-                         + ' with ' + info.trophies + ' trophies, ' + info.warStars + ' war stars, '
-                         + info.attackWins + ' attacks and ' + info.defenseWins + ' defends this season.'
+              output = 'A prospect just completed registration: ' + info.name + '.  A TH' + info.townHallLevel
+                     + ' with ' + info.trophies + ' trophies, ' + info.warStars + ' war stars, '
+                     + info.attackWins + ' attacks and ' + info.defenseWins + ' defends this season.'
 
               if (info.clan && info.clan.name) {
                 output = output + ' Currently ' + humanizedClanRoleMap[info.role] + ' in the clan "' + info.clan.name + '".'
               }
               output = output + ' Discord username: ' + msg.member.user.username
-              this.channels.audit.sendMessage(output)
-            })
-            .catch(e => {
-              console.log(e)
-            })
-        }
-        else {
-          this._updateClashAccount(acct.primaryVillage, msg.member.id)
-          msg.member.addRole(this.roles.newMember)
-          msg.channel.sendMessage(this.joinMsgs['member'])
-          
-          getPlayerJSON(acct.primaryVillage)
-            .then(info => {
+            }
+            else {
+              msg.member.addRole(this.roles.newMember)
+              msg.channel.sendMessage(this.joinMsgs['member'])
+              
               msg.member.addRole(this.roles.family[clanFamilyRoles.get(info.clan.tag)])
 
-              let output = 'A member just completed registration: ' + info.name + '.  A TH' + info.townHallLevel
-                         + ' with ' + info.trophies + ' trophies, ' + info.warStars + ' war stars, '
-                         + info.attackWins + ' attacks and ' + info.defenseWins + ' defends this season.'
+              output = 'A member just completed registration: ' + info.name + '.  A TH' + info.townHallLevel
+                     + ' with ' + info.trophies + ' trophies, ' + info.warStars + ' war stars, '
+                     + info.attackWins + ' attacks and ' + info.defenseWins + ' defends this season.'
               output = output + ' Currently ' + humanizedClanRoleMap[info.role] + ' in the clan "' + info.clan.name + '".'
               output = output + ' Discord username: ' + msg.member.user.username
-              this.channels.audit.sendMessage(output)
-            })
-            .catch(e => {
-              console.log(e)
-            })
-        }
+              
+            }
+            this.channels.audit.sendMessage(output)
+          })
+          .catch(e => {
+            console.log(e)
+          })
     }
 
     const restart_cmd_regex = new RegExp(/^/.source + cmd_prefix + /restart\b *$/.source, 'i')
@@ -592,6 +536,13 @@ OnBoard.prototype.onMessage = function(msg) {
     - send signup command info
     */
     else if (restart_cmd_regex.test(msg.content)) {
+      this._updateDiscordAccount(msg.member.id, {
+          status: 'unknown'
+        , type: 'unknown'
+        , primaryVillage: null
+        , villages: []
+      })
+      msg.channel.sendMessage('Restart successful, ' + member + '!\n\n' + signupBaseMsg).catch(noop)
     }
 
     const support_cmd_regex = new RegExp(/^/.source + cmd_prefix + /get-support\b *$/.source, 'i')
@@ -602,32 +553,66 @@ OnBoard.prototype.onMessage = function(msg) {
     - send response
     */
     else if (support_cmd_regex.test(msg.content)) {
+      acct.support = true
+      this._updateDiscordAccount(msg.member.id, acct)
+      msg.channel.sendMessage(
+          'You are now in support mode and someone from the ' + this.roles.support
+        + ' team will be along shortly to help you.  The bot won\'t respond to you '
+        + 'further, so you can communicate freely with a support person. At any time, '
+        + 'If you\'d like to restart registration from scratch, you can '
+        + 'type `' + cmd_prefix + 'restart` at any time.')
     }
 
-    else {
-      let acct = data.accounts.discord.get(msg.member.id)
-      if (acct && acct.status === 'onboarding') {
-        msg.channel.sendMessage('Type `!continue ` when you\'ve read everything and want to proceed.')
+    else if (acct && !acct.support) {
+      if (acct && acct.status === 'conflict') {
+        msg.channel.sendMessage(conflictBaseMsg)
       }
-      else {
-        let message = '\n**You won\'t be able to do anything until you register**\n\n'
-                    + 'Are you visiting or are you in one of our clans?\n'
-                    + '- type `!register member #CLASHTAG` - if you are already a member in one of our clans\n'
-                    + '- type `!register guest #CLASHTAG` if you are looking to join our family or just visit\n'
-                    // + '- type `!register guest` - for temporary access (your membership will only last a few hours)\n'
-                    + '*replace #CLASHTAG with your CoC tag viewable at the top of your Clash profile page*'
+      else if (acct && acct.status === 'uncomfirmed') {
+        let output = ('type `' + cmd_prefix + 'confirm ` if the above is correct or '
+          + '`' + cmd_prefix + 'restart ` to try again')
+        msg.channel.sendMessage(message)
+      }
+      else if (acct && acct.status === 'onboarding') {
+        msg.channel.sendMessage('You\'re almost done... type `' + cmd_prefix + 'next ` to proceed.')
+      }
+      else {  // status === 'unknown'
+        let message = '\n**You won\'t be able to do anything until you register**\n\n' + signupBaseMsg
         msg.channel.sendMessage(message)
       }
     }
   } // END [IF UNKNOWN]
-  else if (isAdminUser(msg.member)) {
-    // /joinmsg <guest|prospect|member> <edit|view>
+  else if (isMemberUser(msg.member)) {
+    // /help
+    // /commands
 
-    // /mustread add <message...>
-    // /mustread edit <#> <message...>
-    // /mustread delete <#>
-    // /mustread view [#]
-  }
+    // /register #CLASHTAG
+    // /unregister #CLASHTAG
+
+    // /info
+    // /info @DISCORD_USERNAME => /<@[^>]+> */
+    // /info #CLASHTAG
+
+    // /members <GNG|HNH|VNV|FNF|RNR>
+
+    // /refresh
+
+    if (isAdminUser(msg.member)) {
+      // /register #CLASHTAG to @DISCORD_USERNAME
+      // /unregister #CLASHTAG from @DISCORD_USERNAME
+
+      // /joinmsg => shows description and usage
+      // /joinmsg <guest|prospect|member> <edit|view>
+
+      // /mustread => shows description and usage
+      // /mustread add <message...>
+      // /mustread edit <#> <message...>
+      // /mustread delete <#>
+      // /mustread view <#>
+      // /mustread list
+
+    } // END [IF admin]
+
+  } // END [IF member]
 }
 
 OnBoard.prototype.onReady = function() {
@@ -643,6 +628,7 @@ OnBoard.prototype.onReady = function() {
     this.roles.member = this.guild.roles.find('name', 'Members')
     this.roles.newMember = this.guild.roles.find('name', 'New')
     this.roles.unknown = this.guild.roles.find('name', 'Unknown')
+    this.roles.support = this.guild.roles.find('name', 'Support')
     this.roles.family = {}
     for (let [tag, roleName] of Object.entries(clanFamilyRoles)) {
       this.roles.family[roleNmae] = this.guild.roles.find('name', roleName)
